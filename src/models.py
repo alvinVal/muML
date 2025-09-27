@@ -95,7 +95,8 @@ def get_model_registry() -> Dict[str, Dict[str, Any]]:
 	return registry
 
 
-def build_search(model_info: Dict[str, Any], scoring: str = "f1_weighted", cv: int = 5, n_jobs: int = -1) -> Any:
+def build_search(model_info: Dict[str, Any], scoring: str = "f1_weighted", cv: int = 5, n_jobs: int = -1, 
+				custom_params: Dict[str, Any] = None, search_strategy: str = "Grid Search") -> Any:
 	SearchClass = model_info["search"]
 	base: SearchSpec = {
 		"estimator": model_info["model"],
@@ -103,11 +104,26 @@ def build_search(model_info: Dict[str, Any], scoring: str = "f1_weighted", cv: i
 		"scoring": scoring,
 		"n_jobs": n_jobs,
 	}
-	params = model_info.get("params", {})
-	if SearchClass == RandomizedSearchCV:
+	
+	# Use custom parameters if provided, otherwise use defaults
+	params = custom_params if custom_params else model_info.get("params", {})
+	
+	# Override search strategy if specified
+	if search_strategy == "Random Search":
+		SearchClass = RandomizedSearchCV
 		base["param_distributions"] = params
 		base["n_iter"] = 20
 		base["random_state"] = 42
-	else:
+	elif search_strategy == "Grid Search":
+		SearchClass = GridSearchCV
 		base["param_grid"] = params
+	else:
+		# Use original search strategy
+		if SearchClass == RandomizedSearchCV:
+			base["param_distributions"] = params
+			base["n_iter"] = 20
+			base["random_state"] = 42
+		else:
+			base["param_grid"] = params
+	
 	return SearchClass(**base)

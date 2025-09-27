@@ -7,10 +7,12 @@ A user-friendly desktop application for training and comparing multiple machine 
 - **Easy Data Loading**: Load CSV files with automatic column detection
 - **Flexible Feature Selection**: Choose target and feature columns with checkboxes
 - **Multiple Algorithms**: Train 7+ algorithms including Random Forest, SVM, XGBoost, and more
+- **Hyperparameter Optimization**: Configure and tune hyperparameters for each algorithm
 - **Real-time Progress**: See which model is training with timing and accuracy updates
-- **Interactive Results**: Click any result row to see detailed per-class metrics
+- **Interactive Results**: Click any result row to see detailed per-class metrics and top 10 hyperparameter attempts
 - **Visual Charts**: Popup charts showing model performance comparisons
 - **Data Preprocessing**: Automatic missing value imputation and feature scaling
+- **Resource Control**: Configure CPU usage (n_jobs) for optimal performance
 - **Export Results**: Save predictions and detailed metrics to CSV
 
 ## Quick Start
@@ -30,8 +32,10 @@ python -m src.gui_app
    - Select target column (defaults to `group_id`)
    - Choose features using checkboxes
    - Pick algorithms to train
+   - Configure hyperparameters by clicking "Configure [Algorithm]"
+   - Adjust n_jobs for CPU usage control (default: 8 cores)
    - Click "Run" and watch real-time progress
-   - Double-click result rows for detailed metrics
+   - Double-click result rows for detailed metrics and hyperparameter analysis
 
 ## Supported Algorithms
 
@@ -69,16 +73,20 @@ muML/
 ## Advanced Features
 
 - **Hyperparameter Tuning**: Grid search and randomized search for optimal parameters
+- **Top 10 Analysis**: View the best 10 hyperparameter attempts for each algorithm
 - **Cross-Validation**: 5-fold CV for robust performance estimation
 - **Class Balancing**: Automatic handling of imbalanced datasets
 - **Progress Tracking**: Real-time updates during training
 - **Detailed Metrics**: Per-class precision, recall, F1-score, and support
+- **Resource Management**: Control CPU usage with n_jobs parameter
+- **Interactive Configuration**: Separate checkboxes for algorithm selection and configure buttons for hyperparameters
 
 ## Installation Notes
 
 - **XGBoost**: Optional dependency. If not installed, simply deselect it in the GUI
 - **Python 3.8+**: Required for type hints and modern features
 - **Memory**: Recommended 4GB+ RAM for large datasets
+- **CPU Usage**: Default uses 8 cores; adjust n_jobs parameter as needed
 
 ## License
 

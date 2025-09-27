@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import threading
-from typing import Dict, List
+import warnings
+from typing import Dict, List, Any
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -11,7 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import warnings
 from sklearn.exceptions import ConvergenceWarning
 
 from src.data import read_csv, list_columns
@@ -32,6 +33,8 @@ class MLGuiApp(ttk.Frame):
 		self.selected_algos: Dict[str, tk.BooleanVar] = {k: tk.BooleanVar(value=True) for k in self.algos.keys()}
 		self.predictions_df: pd.DataFrame | None = None
 		self.detailed_results: Dict[str, Dict[str, Any]] = {}
+		self.custom_params: Dict[str, Dict[str, Any]] = {}
+		self.search_strategies: Dict[str, tk.StringVar] = {}
 
 		self.feature_vars: Dict[str, tk.BooleanVar] = {}
 
@@ -39,7 +42,7 @@ class MLGuiApp(ttk.Frame):
 
 	def _build_ui(self):
 		self.master.title("muML - Multiple Machine Learning Algorithms")
-		self.master.geometry("1100x700")
+		self.master.geometry("1400x800")
 
 		# Top controls
 		top = ttk.Frame(self)
@@ -62,6 +65,7 @@ class MLGuiApp(ttk.Frame):
 		self.id_var.trace_add("write", lambda *args: self._on_id_changed())
 		self.test_size_var = tk.StringVar(value="0.3")
 		self.stratify_var = tk.BooleanVar(value=True)
+		self.n_jobs_var = tk.StringVar(value="8")
 
 		row1 = ttk.Frame(opts)
 		row1.pack(fill=tk.X, padx=8, pady=4)
@@ -80,12 +84,19 @@ class MLGuiApp(ttk.Frame):
 		strat_cb = ttk.Checkbutton(row1, text="Stratify", variable=self.stratify_var)
 		strat_cb.pack(side=tk.LEFT, padx=6)
 
-		# Middle: features and algorithms
+		ttk.Label(row1, text="n_jobs:").pack(side=tk.LEFT, padx=(10, 0))
+		n_jobs_entry = ttk.Entry(row1, textvariable=self.n_jobs_var, width=8)
+		n_jobs_entry.pack(side=tk.LEFT, padx=6)
+		ttk.Label(row1, text="(uses 8 cores by default, -1 to use all cores)", font=("Arial", 8), 
+				 foreground="gray").pack(side=tk.LEFT, padx=6)
+
+		# Middle: features, algorithms, and hyperparameters
 		mid = ttk.Frame(self)
 		mid.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
 		feat_frame = ttk.LabelFrame(mid, text="Features")
-		feat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+		feat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 8))
+		feat_frame.configure(width=200)
 
 		# Feature control buttons
 		feat_ctrl = ttk.Frame(feat_frame)
@@ -105,13 +116,43 @@ class MLGuiApp(ttk.Frame):
 		self.feat_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0), pady=4)
 		scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
 
-		algo_frame = ttk.LabelFrame(mid, text="Algorithms")
-		algo_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+		# Algorithms and hyperparameters side by side
+		algo_hp_frame = ttk.Frame(mid)
+		algo_hp_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+		algo_frame = ttk.LabelFrame(algo_hp_frame, text="Algorithms")
+		algo_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 4))
+		algo_frame.configure(width=200)
 		self.algo_checks: Dict[str, ttk.Checkbutton] = {}
+		self.algo_buttons: Dict[str, ttk.Button] = {}
 		for name, var in self.selected_algos.items():
+			# Checkbox for selection
 			cb = ttk.Checkbutton(algo_frame, text=name, variable=var)
 			cb.pack(anchor=tk.W, padx=8, pady=2)
 			self.algo_checks[name] = cb
+			
+			# Button for hyperparameter configuration
+			btn = ttk.Button(algo_frame, text=f"Configure {name}", 
+							command=lambda n=name: self._on_algo_configure_click(n))
+			btn.pack(anchor=tk.W, padx=8, pady=1)
+			self.algo_buttons[name] = btn
+
+		# Hyperparameters frame
+		self.hp_frame = ttk.LabelFrame(algo_hp_frame, text="Hyperparameters")
+		self.hp_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0))
+		self.hp_frame.configure(width=500)
+		
+		# Hyperparameters content area
+		self.hp_canvas = tk.Canvas(self.hp_frame, borderwidth=0, highlightthickness=0)
+		hp_scroll = ttk.Scrollbar(self.hp_frame, orient="vertical", command=self.hp_canvas.yview)
+		self.hp_inner = ttk.Frame(self.hp_canvas)
+		self.hp_inner.bind(
+			"<Configure>", lambda e: self.hp_canvas.configure(scrollregion=self.hp_canvas.bbox("all"))
+		)
+		self.hp_canvas.create_window((0, 0), window=self.hp_inner, anchor="nw")
+		self.hp_canvas.configure(yscrollcommand=hp_scroll.set)
+		self.hp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0), pady=4)
+		hp_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
 
 		# Action buttons
 		act = ttk.Frame(self)
@@ -164,6 +205,13 @@ class MLGuiApp(ttk.Frame):
 		
 		# Bind click event to results table
 		self.results_table.bind("<Double-1>", self._on_table_click)
+
+		# Initialize hyperparameter widgets
+		self.hp_widgets: Dict[str, Dict[str, Any]] = {}
+		self._init_hyperparameter_widgets()
+		
+		# Show initial hyperparameters message
+		self._show_initial_hyperparameters_message()
 
 		# Try to preload defaults if file exists
 		self._try_preload_defaults()
@@ -228,6 +276,160 @@ class MLGuiApp(ttk.Frame):
 		# Rebuild features to ensure id is excluded
 		if self.columns:
 			self._rebuild_feature_checks(self.columns)
+
+	def _init_hyperparameter_widgets(self):
+		"""Initialize hyperparameter widgets for all algorithms"""
+		for algo_name in self.algos.keys():
+			self.hp_widgets[algo_name] = {}
+			self.search_strategies[algo_name] = tk.StringVar(value="Grid Search")
+			self.custom_params[algo_name] = {}
+
+	def _on_algo_configure_click(self, algo_name: str):
+		"""Handle algorithm configure button click to show hyperparameters"""
+		self._show_hyperparameters(algo_name)
+
+	def _show_hyperparameters(self, algo_name: str):
+		"""Show hyperparameter controls for selected algorithm"""
+		if algo_name not in self.algos:
+			return
+		
+		# Clear existing hyperparameter widgets
+		for child in list(self.hp_inner.children.values()):
+			child.destroy()
+		
+		# Clear the widget references for this algorithm to prevent stale references
+		if algo_name in self.hp_widgets:
+			del self.hp_widgets[algo_name]
+		
+		algo_info = self.algos[algo_name]
+		params = algo_info.get("params", {})
+		
+		if not params:
+			ttk.Label(self.hp_inner, text=f"No hyperparameters for {algo_name}", 
+					 font=("Arial", 10, "italic")).pack(pady=10)
+			return
+		
+		# Search strategy selection
+		strategy_frame = ttk.Frame(self.hp_inner)
+		strategy_frame.pack(fill=tk.X, pady=(0, 10))
+		ttk.Label(strategy_frame, text="Search Strategy:", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+		ttk.Radiobutton(strategy_frame, text="Grid Search", variable=self.search_strategies[algo_name], 
+					   value="Grid Search").pack(side=tk.LEFT, padx=(10, 5))
+		ttk.Radiobutton(strategy_frame, text="Random Search", variable=self.search_strategies[algo_name], 
+					   value="Random Search").pack(side=tk.LEFT, padx=5)
+		
+		# Hyperparameter controls
+		ttk.Label(self.hp_inner, text=f"Hyperparameters for {algo_name}:", 
+				 font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+		
+		# Initialize fresh widget dictionary for this algorithm
+		self.hp_widgets[algo_name] = {}
+		
+		for param_name, default_values in params.items():
+			param_frame = ttk.Frame(self.hp_inner)
+			param_frame.pack(fill=tk.X, pady=2)
+			
+			ttk.Label(param_frame, text=f"{param_name}:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+			
+			# Create entry widget for parameter values
+			entry = ttk.Entry(param_frame, width=40)
+			entry.pack(side=tk.LEFT, padx=(5, 0))
+			
+			# Set default values
+			if isinstance(default_values, list):
+				entry.insert(0, str(default_values))
+			else:
+				entry.insert(0, str(default_values))
+			
+			# Store reference
+			self.hp_widgets[algo_name][param_name] = entry
+			
+			# Add help text
+			help_text = f"Default: {default_values}"
+			ttk.Label(param_frame, text=help_text, font=("Arial", 8), 
+					 foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
+
+	def _show_initial_hyperparameters_message(self):
+		"""Show initial message in hyperparameters frame"""
+		# Clear hyperparameter area
+		for child in list(self.hp_inner.children.values()):
+			child.destroy()
+		
+		# Clear all widget references to prevent stale references
+		self.hp_widgets.clear()
+		
+		ttk.Label(self.hp_inner, text="Click 'Configure [Algorithm]' to set hyperparameters", 
+				 font=("Arial", 10, "italic")).pack(pady=20)
+		
+		# Add instruction text
+		instruction_text = """Instructions:
+• Click "Configure [Algorithm]" to set hyperparameters
+• Enter values as lists: [1, 2, 3] or single values: 5
+• Choose Grid Search for exhaustive search or Random Search for sampling
+• Leave empty to use default values
+• Check algorithms to include them in training
+• Adjust n_jobs to control CPU usage (8 = default, -1 = all cores, 1 = single core)"""
+		ttk.Label(self.hp_inner, text=instruction_text, font=("Arial", 8), 
+				 foreground="gray", justify=tk.LEFT).pack(pady=10, padx=10)
+
+	def _hide_hyperparameters(self, algo_name: str):
+		"""Hide hyperparameter controls for deselected algorithm"""
+		self._show_initial_hyperparameters_message()
+
+	def _get_custom_hyperparameters(self) -> Dict[str, Dict[str, Any]]:
+		"""Get custom hyperparameters from UI"""
+		custom_params = {}
+		
+		# Only get hyperparameters for currently selected algorithms
+		selected_algos = [name for name, var in self.selected_algos.items() if var.get()]
+		
+		for algo_name in selected_algos:
+			if algo_name not in self.hp_widgets:
+				continue
+				
+			algo_params = {}
+			widgets = self.hp_widgets[algo_name]
+			
+			for param_name, entry_widget in widgets.items():
+				try:
+					# Check if widget still exists and is valid
+					if not hasattr(entry_widget, 'get'):
+						continue
+					
+					# Try to get the value, but handle widget destruction gracefully
+					try:
+						value_str = entry_widget.get().strip()
+					except tk.TclError:
+						# Widget has been destroyed, skip it
+						continue
+						
+					if value_str:
+						# Try to parse as list first, then single value
+						if value_str.startswith('[') and value_str.endswith(']'):
+							# Parse as list
+							algo_params[param_name] = ast.literal_eval(value_str)
+						else:
+							# Try to parse as single value
+							try:
+								# Try integer
+								algo_params[param_name] = int(value_str)
+							except ValueError:
+								try:
+									# Try float
+									algo_params[param_name] = float(value_str)
+								except ValueError:
+									# Keep as string
+									algo_params[param_name] = value_str
+				except Exception as e:
+					# Only show warning if it's not a widget destruction error
+					if "invalid command name" not in str(e):
+						self._append(f"Warning: Invalid parameter value for {algo_name}.{param_name}: {e}\n")
+					continue
+			
+			if algo_params:
+				custom_params[algo_name] = algo_params
+		
+		return custom_params
 
 	def _browse_csv(self):
 		path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
@@ -305,30 +507,70 @@ class MLGuiApp(ttk.Frame):
 		# Create popup window for detailed metrics
 		detail_window = tk.Toplevel(self.master)
 		detail_window.title(f"muML - Detailed Metrics - {classifier_name}")
-		detail_window.geometry("600x500")
+		detail_window.geometry("1000x700")
 		
 		# Create scrollable text area
 		text_frame = ttk.Frame(detail_window)
 		text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 		
-		text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Consolas", 10))
-		scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
-		text_widget.configure(yscrollcommand=scrollbar.set)
+		text_widget = tk.Text(text_frame, wrap=tk.NONE, font=("Consolas", 9))
+		scrollbar_v = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
+		scrollbar_h = ttk.Scrollbar(text_frame, orient="horizontal", command=text_widget.xview)
+		text_widget.configure(yscrollcommand=scrollbar_v.set, xscrollcommand=scrollbar_h.set)
 		
 		text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-		scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+		scrollbar_v.pack(side=tk.RIGHT, fill=tk.Y)
+		scrollbar_h.pack(side=tk.BOTTOM, fill=tk.X)
 		
 		# Format detailed metrics
 		content = f"Detailed Metrics for {classifier_name}\n"
-		content += "=" * 50 + "\n\n"
+		content += "=" * 60 + "\n\n"
 		content += f"Overall Accuracy: {details['accuracy']:.4f}\n"
 		content += f"F1-Score (Weighted): {details['f1_weighted']:.4f}\n"
 		content += f"Training Time: {details['training_time']:.2f} seconds\n\n"
 		
+		# Add hyperparameter optimization results
+		if 'best_params' in details and 'cv_results' in details:
+			content += "Hyperparameter Optimization Results:\n"
+			content += "-" * 40 + "\n"
+			content += f"Best Parameters: {details['best_params']}\n"
+			content += f"Best CV Score: {details['cv_results']['mean_test_score'][details['cv_results']['rank_test_score'] == 1][0]:.4f}\n\n"
+			
+			# Show top 10 attempts
+			content += "Top 10 Hyperparameter Attempts:\n"
+			content += "-" * 40 + "\n"
+			
+			# Get CV results and sort by score
+			cv_results = details['cv_results']
+			mean_scores = cv_results['mean_test_score']
+			params = cv_results['params']
+			
+			# Create list of (score, params) tuples and sort by score
+			attempts = list(zip(mean_scores, params))
+			attempts.sort(key=lambda x: x[0], reverse=True)
+			
+			content += f"{'Rank':<4} {'Score':<8} {'Parameters'}\n"
+			content += "-" * 80 + "\n"
+			
+			for i, (score, param_set) in enumerate(attempts[:10], 1):
+				# Format parameters more readably
+				param_items = []
+				for key, value in param_set.items():
+					param_items.append(f"{key}={value}")
+				param_str = ", ".join(param_items)
+				
+				# If still too long, break into multiple lines
+				if len(param_str) > 70:
+					content += f"{i:<4} {score:<8.4f} {param_str}\n"
+				else:
+					content += f"{i:<4} {score:<8.4f} {param_str}\n"
+			
+			content += "\n"
+		
 		content += "Per-Class Metrics:\n"
-		content += "-" * 30 + "\n"
+		content += "-" * 40 + "\n"
 		content += f"{'Class':<8} {'Precision':<10} {'Recall':<10} {'F1-Score':<10} {'Support':<8}\n"
-		content += "-" * 30 + "\n"
+		content += "-" * 40 + "\n"
 		
 		# Show per-class metrics
 		for class_name in sorted(crep.keys()):
@@ -339,7 +581,7 @@ class MLGuiApp(ttk.Frame):
 		
 		# Add summary metrics
 		content += "\nSummary:\n"
-		content += "-" * 30 + "\n"
+		content += "-" * 40 + "\n"
 		if 'macro avg' in crep:
 			content += f"Macro Avg:     {crep['macro avg']['precision']:.4f} {crep['macro avg']['recall']:.4f} {crep['macro avg']['f1-score']:.4f} {crep['macro avg']['support']:.0f}\n"
 		if 'weighted avg' in crep:
@@ -424,7 +666,18 @@ class MLGuiApp(ttk.Frame):
 						df=self.df, target=target, features=features, test_size=test_size,
 						stratify=self.stratify_var.get(), id_column=id_col,
 					)
-					results, best = train_selected(selected, prep, n_jobs=-1, progress_callback=progress_callback)
+					# Get custom hyperparameters and search strategies
+					custom_hyperparams = self._get_custom_hyperparameters()
+					search_strategies = {name: self.search_strategies[name].get() for name in selected}
+					
+					# Get n_jobs setting
+					try:
+						n_jobs = int(self.n_jobs_var.get())
+					except (ValueError, TypeError):
+						n_jobs = 8
+					
+					results, best = train_selected(selected, prep, n_jobs=n_jobs, progress_callback=progress_callback,
+												custom_hyperparams=custom_hyperparams, search_strategies=search_strategies)
 				
 				# Store detailed results for clickable table
 				self.detailed_results = best.get("detailed_results", {})
@@ -468,9 +721,6 @@ class MLGuiApp(ttk.Frame):
 	def _append(self, text: str):
 		self.output.insert(tk.END, text)
 		self.output.see(tk.END)
-
-	def _clear(self):
-		self.output.delete("1.0", tk.END)
 
 
 def main():

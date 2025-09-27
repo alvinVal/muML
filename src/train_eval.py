@@ -10,7 +10,9 @@ from src.models import get_model_registry, build_search
 from src.preprocess import PreparedData
 
 
-def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, progress_callback=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, progress_callback=None, 
+				  custom_hyperparams: Dict[str, Dict[str, Any]] = None, 
+				  search_strategies: Dict[str, str] = None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 	registry = get_model_registry()
 	results: List[Dict[str, Any]] = []
 	detailed_results: Dict[str, Dict[str, Any]] = {}
@@ -29,7 +31,13 @@ def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, prog
 		start_time = time.time()
 		
 		info = registry[name]
-		search = build_search(info, scoring="f1_weighted", cv=5, n_jobs=n_jobs)
+		
+		# Get custom hyperparameters and search strategy for this algorithm
+		custom_params = custom_hyperparams.get(name, {}) if custom_hyperparams else {}
+		search_strategy = search_strategies.get(name, "Grid Search") if search_strategies else "Grid Search"
+		
+		search = build_search(info, scoring="f1_weighted", cv=5, n_jobs=n_jobs, 
+							custom_params=custom_params, search_strategy=search_strategy)
 		search.fit(prep.X_train, prep.y_train_enc)
 		best_model = search.best_estimator_
 
@@ -56,7 +64,9 @@ def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, prog
 			"classification_report": crep,
 			"training_time": elapsed,
 			"y_test": y_test,
-			"y_pred": y_pred
+			"y_pred": y_pred,
+			"best_params": search.best_params_,
+			"cv_results": search.cv_results_
 		}
 		
 		# add per-class for up to 5 classes if present

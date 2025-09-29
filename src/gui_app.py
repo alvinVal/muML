@@ -1197,6 +1197,37 @@ class MLGuiApp(ttk.Frame):
 		tree_scroll_v.pack(side=tk.RIGHT, fill=tk.Y)
 		tree_scroll_h.pack(side=tk.BOTTOM, fill=tk.X)
 		
+		# Color legend frame
+		legend_frame = ttk.LabelFrame(main_frame, text="Color Legend")
+		legend_frame.pack(fill=tk.X, pady=(5, 10))
+		
+		# Create legend with color indicators
+		legend_controls = ttk.Frame(legend_frame)
+		legend_controls.pack(fill=tk.X, padx=10, pady=5)
+		
+		# Legend items
+		legend_items = [
+			("#90EE90", "100% correct (all models)"),
+			("#98FB98", "80-99% correct"),
+			("#ADFF2F", "60-79% correct"),
+			("#FFFF99", "40-59% correct (or all N/A)"),
+			("#FFB366", "20-39% correct"),
+			("#FF9999", "1-19% correct"),
+			("#FFB6C1", "0% correct (no models)")
+		]
+		
+		for color, description in legend_items:
+			item_frame = ttk.Frame(legend_controls)
+			item_frame.pack(side=tk.LEFT, padx=5)
+			
+			# Color indicator
+			color_label = tk.Label(item_frame, text="■", fg=color, font=("Arial", 12))
+			color_label.pack(side=tk.LEFT)
+			
+			# Description
+			desc_label = ttk.Label(item_frame, text=description, font=("Arial", 9))
+			desc_label.pack(side=tk.LEFT, padx=(2, 0))
+		
 		# Model accuracy display frame
 		accuracy_frame = ttk.LabelFrame(main_frame, text="Model Accuracies (Filtered Results)")
 		accuracy_frame.pack(fill=tk.X, pady=(10, 5))
@@ -1297,17 +1328,67 @@ class MLGuiApp(ttk.Frame):
 			
 			combined_data.append(row_values)
 		
-		# Insert data into tree with enhanced visual indicators
+		# Configure tags for different accuracy levels
+		tree.tag_configure("perfect", background="#90EE90")  # 100% correct
+		tree.tag_configure("excellent", background="#98FB98")  # 80-99% correct
+		tree.tag_configure("good", background="#ADFF2F")  # 60-79% correct
+		tree.tag_configure("neutral", background="#FFFF99")  # 40-59% correct or all N/A
+		tree.tag_configure("poor", background="#FFB366")  # 20-39% correct
+		tree.tag_configure("bad", background="#FF9999")  # 1-19% correct
+		tree.tag_configure("terrible", background="#FFB6C1")  # 0% correct
+		
+		# Insert data into tree with enhanced visual indicators and color coding
 		for data in combined_data:
-			# Insert row
-			item = tree.insert("", tk.END, values=data)
+			# Calculate accuracy for this row (how many models got it right)
+			correct_count = 0
+			total_models = len(model_names)
+			na_count = 0
+			
+			# Count correct predictions (skip first 3 columns: tree_id, actual_group, split)
+			for i in range(3, len(data)):
+				cell_value = data[i]
+				if isinstance(cell_value, str) and cell_value.startswith("✅"):
+					correct_count += 1
+				elif isinstance(cell_value, str) and (cell_value == "N/A" or cell_value == "➖ N/A"):
+					na_count += 1
+			
+			# Adjust total models by removing N/A predictions
+			total_models -= na_count
+			
+			# Calculate accuracy percentage
+			if total_models > 0:
+				accuracy_percentage = correct_count / total_models
+			elif na_count == len(model_names):
+				# All predictions are N/A (e.g., training data) - treat as neutral
+				accuracy_percentage = 0.5  # Neutral color (yellow)
+			else:
+				accuracy_percentage = 0
+			
+			# Determine tag based on accuracy
+			if accuracy_percentage == 1.0:
+				tag = "perfect"
+			elif accuracy_percentage >= 0.8:
+				tag = "excellent"
+			elif accuracy_percentage >= 0.6:
+				tag = "good"
+			elif accuracy_percentage >= 0.4:
+				tag = "neutral"
+			elif accuracy_percentage >= 0.2:
+				tag = "poor"
+			elif accuracy_percentage > 0:
+				tag = "bad"
+			else:
+				tag = "terrible"
+			
+			# Insert row with tag
+			item = tree.insert("", tk.END, values=data, tags=(tag,))
+		
+		# Update status with color coding information
+		total_samples = len(combined_data)
+		self.status_label.config(text=f"Showing {total_samples} samples across {len(model_names)} models | Row colors indicate how many models correctly classified each instance")
 		
 		# Calculate and display per-model accuracies
 		self._update_model_accuracies(combined_data, model_names, accuracy_frame)
-		
-		# Update status
-		total_samples = len(combined_data)
-		self.status_label.config(text=f"Showing {total_samples} samples across {len(model_names)} models")
 
 	def _update_model_accuracies(self, combined_data, model_names, accuracy_frame):
 		"""Update the model accuracy display based on filtered data"""

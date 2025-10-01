@@ -206,7 +206,7 @@ class MLGuiApp(ttk.Frame):
 		copy_btn.pack(side=tk.LEFT, padx=5)
 		
 		# Prediction and model management buttons
-		predict_all_btn = ttk.Button(act, text="🔮 Predict All", command=self._predict_all_instances, style='Info.TButton')
+		predict_all_btn = ttk.Button(act, text="🔮 Predict All (Selected)", command=self._predict_all_instances, style='Info.TButton')
 		predict_all_btn.pack(side=tk.LEFT, padx=5)
 		save_models_btn = ttk.Button(act, text="💾 Save Models", command=self._save_models, style='Success.TButton')
 		save_models_btn.pack(side=tk.LEFT, padx=5)
@@ -1268,7 +1268,7 @@ class MLGuiApp(ttk.Frame):
 
 
 	def _predict_all_instances(self):
-		"""Predict on all instances in the dataset using trained models"""
+		"""Predict on all instances in the dataset using selected trained models"""
 		if not hasattr(self, 'trained_models') or not self.trained_models:
 			messagebox.showwarning("Missing", "Train models first to make predictions.")
 			return
@@ -1291,31 +1291,83 @@ class MLGuiApp(ttk.Frame):
 			messagebox.showwarning("Missing", "Select a target column.")
 			return
 		
-		# Prepare data for prediction
+		# Get selected algorithms from main window checkboxes
+		selected_models = [name for name, var in self.selected_algos.items() if var.get()]
+		if not selected_models:
+			messagebox.showwarning("Missing", "Select at least one algorithm to use for predictions.")
+			return
+		
+		# Filter to only include models that were actually trained
+		available_models = [model for model in selected_models if model in self.trained_models]
+		if not available_models:
+			messagebox.showwarning("Missing", "None of the selected algorithms have been trained yet.")
+			return
+		
+		# Show which models will be used
+		self._append(f"Using selected models for prediction: {', '.join(available_models)}\n")
+		
+		# Run predictions with selected models
+		self._run_predictions_with_models(available_models, selected_features, target, id_col)
+	
+	
+	def _run_predictions_with_models(self, selected_models, selected_features, target, id_col):
+		"""Run predictions with selected models using the same preprocessing as training"""
 		try:
 			# Create a copy of the dataframe
 			df_copy = self.df.copy()
 			
-			# Handle missing values
-			from src.preprocess import SimpleImputer
-			imputer = SimpleImputer(strategy="mean")
+			# Get actual target values for comparison
+			actual_values = df_copy[target].values
+			
+			# Get unique classes from the actual data
+			unique_classes = sorted(df_copy[target].unique())
+			self._append(f"Dataset classes: {unique_classes}\n")
+			
+			# Apply the same preprocessing as training manually
+			# This ensures we use the same label encoder and scaler
+			from sklearn.preprocessing import LabelEncoder, StandardScaler
+			from sklearn.impute import SimpleImputer
+			
+			# Prepare features
 			X = df_copy[selected_features].copy()
+			
+			# Handle missing values (same as training)
+			imputer = SimpleImputer(strategy="mean")
 			X_imputed = imputer.fit_transform(X)
 			X_imputed = pd.DataFrame(X_imputed, columns=selected_features, index=X.index)
 			
-			# Scale features
-			from sklearn.preprocessing import StandardScaler
+			# Scale features (same as training)
 			scaler = StandardScaler()
 			X_scaled = scaler.fit_transform(X_imputed)
 			
-			# Make predictions with all trained models
-			predictions_data = []
-			model_names = list(self.trained_models.keys())
+			# Encode target labels (same as training)
+			label_encoder = LabelEncoder()
+			y_encoded = label_encoder.fit_transform(df_copy[target])
 			
-			for model_name, model in self.trained_models.items():
+			self._append(f"Using label encoder classes: {label_encoder.classes_}\n")
+			
+			# Make predictions with selected models
+			predictions_data = []
+			model_names = selected_models
+			
+			for model_name in selected_models:
+				model = self.trained_models[model_name]
 				try:
-					# Make predictions
-					y_pred = model.predict(X_scaled)
+					# Make predictions (these will be encoded)
+					y_pred_encoded = model.predict(X_scaled)
+					
+					# Decode predictions back to original labels
+					y_pred = label_encoder.inverse_transform(y_pred_encoded)
+					
+					# Check for any remaining invalid predictions
+					invalid_predictions = []
+					for i, pred in enumerate(y_pred):
+						if pred not in unique_classes:
+							invalid_predictions.append((i, pred))
+					
+					if invalid_predictions:
+						self._append(f"Warning: {model_name} made {len(invalid_predictions)} invalid predictions after decoding\n")
+						self._append(f"Invalid predictions: {[pred for _, pred in invalid_predictions[:10]]}{'...' if len(invalid_predictions) > 10 else ''}\n")
 					
 					# Get prediction probabilities if available
 					try:
@@ -1325,12 +1377,14 @@ class MLGuiApp(ttk.Frame):
 						confidence = np.ones(len(y_pred))  # Default confidence
 					
 					# Store predictions
-					for i, (pred, conf) in enumerate(zip(y_pred, confidence)):
+					for i, (pred, conf, actual) in enumerate(zip(y_pred, confidence, actual_values)):
 						predictions_data.append({
 							'model': model_name,
 							'instance_id': df_copy.index[i] if id_col is None else df_copy.iloc[i][id_col],
 							'prediction': pred,
-							'confidence': conf
+							'actual': actual,
+							'confidence': conf,
+							'is_correct': pred == actual
 						})
 					
 					self._append(f"Generated predictions for {model_name}: {len(y_pred)} instances\n")
@@ -1350,60 +1404,107 @@ class MLGuiApp(ttk.Frame):
 			self._append(f"Prediction error: {e}\n")
 	
 	def _show_all_predictions_results(self):
-		"""Show results of predictions on all instances"""
+		"""Show results of predictions on all instances - exact copy of main results viewer"""
 		if self.all_predictions_df is None:
 			return
 		
 		# Create results window
 		predictions_window = tk.Toplevel(self.master)
 		predictions_window.title("muML - Predictions on All Instances")
-		predictions_window.geometry("1400x800")
+		predictions_window.geometry("1600x800")
 		
 		# Main frame
 		main_frame = ttk.Frame(predictions_window)
 		main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 		
 		# Title
-		title_label = ttk.Label(main_frame, text="Predictions on All Dataset Instances", 
+		title_label = ttk.Label(main_frame, text="Predictions on All Dataset Instances - Model Comparison", 
 							   font=("Arial", 14, "bold"))
 		title_label.pack(pady=(0, 10))
 		
-		# Summary statistics
-		summary_frame = ttk.LabelFrame(main_frame, text="Summary Statistics")
-		summary_frame.pack(fill=tk.X, pady=(0, 10))
+		# Convert predictions data to the same format as main results viewer
+		# Create all_predictions dictionary similar to main results viewer
+		model_names = self.all_predictions_df['model'].unique()
+		self.all_predictions = {}
 		
-		summary_text = f"Total predictions: {len(self.all_predictions_df)}\n"
-		summary_text += f"Models used: {', '.join(self.all_predictions_df['model'].unique())}\n"
-		summary_text += f"Instances predicted: {self.all_predictions_df['instance_id'].nunique()}\n"
+		for model_name in model_names:
+			model_data = self.all_predictions_df[self.all_predictions_df['model'] == model_name]
+			
+			# Create dataframe in the same format as main results viewer
+			model_df = pd.DataFrame({
+				'tree_id': model_data['instance_id'],
+				'actual_group': model_data['actual'],
+				'split': ['predict'] * len(model_data),  # All are predictions
+				'predicted_group': model_data['prediction'],
+				'is_correct': model_data['is_correct']
+			})
+			
+			self.all_predictions[model_name] = model_df
 		
-		summary_label = ttk.Label(summary_frame, text=summary_text, font=("Arial", 10))
-		summary_label.pack(padx=10, pady=5)
+		# Filter controls frame
+		filter_frame = ttk.LabelFrame(main_frame, text="Filters")
+		filter_frame.pack(fill=tk.X, pady=(0, 10))
 		
-		# Pivot table for better visualization
-		pivot_df = self.all_predictions_df.pivot_table(
-			index='instance_id', 
-			columns='model', 
-			values='prediction', 
-			aggfunc='first'
-		).fillna('N/A')
+		# Filter controls
+		filter_controls = ttk.Frame(filter_frame)
+		filter_controls.pack(fill=tk.X, padx=10, pady=10)
 		
-		# Create treeview for results
+		# Split filter (not applicable for predictions, but keeping for consistency)
+		ttk.Label(filter_controls, text="Split:").pack(side=tk.LEFT)
+		split_var = tk.StringVar(value="All")
+		split_cb = ttk.Combobox(filter_controls, textvariable=split_var, state="readonly", width=15)
+		split_cb['values'] = ["All", "predict"]
+		split_cb.pack(side=tk.LEFT, padx=(5, 20))
+		
+		# Group filter
+		ttk.Label(filter_controls, text="Group:").pack(side=tk.LEFT)
+		group_var = tk.StringVar(value="All Groups")
+		group_cb = ttk.Combobox(filter_controls, textvariable=group_var, state="readonly", width=15)
+		
+		# Get unique groups from all predictions
+		all_groups = set()
+		for df in self.all_predictions.values():
+			all_groups.update(df['actual_group'].unique())
+		group_cb['values'] = ["All Groups"] + sorted([str(g) for g in all_groups])
+		group_cb.pack(side=tk.LEFT, padx=(5, 20))
+		
+		# Correctness filter
+		ttk.Label(filter_controls, text="Correctness:").pack(side=tk.LEFT)
+		correct_var = tk.StringVar(value="All")
+		correct_cb = ttk.Combobox(filter_controls, textvariable=correct_var, state="readonly", width=15)
+		correct_cb['values'] = ["All", "Correct", "Incorrect"]
+		correct_cb.pack(side=tk.LEFT, padx=(5, 20))
+		
+		# Refresh button
+		refresh_btn = ttk.Button(filter_controls, text="Refresh", 
+								command=lambda: self._refresh_predictions_results_view(results_tree, split_var, group_var, correct_var, accuracy_frame))
+		refresh_btn.pack(side=tk.RIGHT)
+		
+		# Results tree frame
 		tree_frame = ttk.Frame(main_frame)
 		tree_frame.pack(fill=tk.BOTH, expand=True)
 		
-		# Get columns
-		columns = ['instance_id'] + list(pivot_df.columns)
-		
-		# Create treeview
+		# Create treeview for results with models as columns
+		columns = ["tree_id", "actual_group", "split"] + list(model_names)
 		results_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=20)
 		
 		# Configure columns
-		results_tree.heading("instance_id", text="Instance ID")
-		results_tree.column("instance_id", width=100, anchor=tk.CENTER)
+		results_tree.heading("tree_id", text="ID")
+		results_tree.heading("actual_group", text="Actual")
+		results_tree.heading("split", text="Split")
 		
-		for model_name in pivot_df.columns:
+		# Configure model columns
+		for model_name in model_names:
 			results_tree.heading(model_name, text=model_name)
-			results_tree.column(model_name, width=120, anchor=tk.CENTER)
+		
+		# Set column widths
+		results_tree.column("tree_id", width=60, anchor=tk.CENTER)
+		results_tree.column("actual_group", width=80, anchor=tk.CENTER)
+		results_tree.column("split", width=60, anchor=tk.CENTER)
+		
+		# Set model column widths
+		for model_name in model_names:
+			results_tree.column(model_name, width=100, anchor=tk.CENTER)
 		
 		# Add scrollbars
 		tree_scroll_v = ttk.Scrollbar(tree_frame, orient="vertical", command=results_tree.yview)
@@ -1415,20 +1516,250 @@ class MLGuiApp(ttk.Frame):
 		tree_scroll_v.pack(side=tk.RIGHT, fill=tk.Y)
 		tree_scroll_h.pack(side=tk.BOTTOM, fill=tk.X)
 		
-		# Insert data
-		for idx, row in pivot_df.iterrows():
-			values = [idx] + [row[col] for col in pivot_df.columns]
-			results_tree.insert("", tk.END, values=values)
+		# Color legend frame
+		legend_frame = ttk.LabelFrame(main_frame, text="Color Legend")
+		legend_frame.pack(fill=tk.X, pady=(5, 10))
 		
-		# Save button
-		save_frame = ttk.Frame(main_frame)
-		save_frame.pack(fill=tk.X, pady=(10, 0))
+		# Create legend with color indicators
+		legend_controls = ttk.Frame(legend_frame)
+		legend_controls.pack(fill=tk.X, padx=10, pady=5)
 		
-		save_btn = ttk.Button(save_frame, text="Save Predictions CSV", 
-							 command=lambda: self._save_all_predictions())
-		save_btn.pack(side=tk.LEFT)
+		# Legend items
+		legend_items = [
+			("#90EE90", "100% correct (all models)"),
+			("#98FB98", "80-99% correct"),
+			("#ADFF2F", "60-79% correct"),
+			("#FFFF99", "40-59% correct (or all N/A)"),
+			("#FFB366", "20-39% correct"),
+			("#FF9999", "1-19% correct"),
+			("#FFB6C1", "0% correct (no models)")
+		]
+		
+		for color, description in legend_items:
+			item_frame = ttk.Frame(legend_controls)
+			item_frame.pack(side=tk.LEFT, padx=5)
+			
+			# Color indicator
+			color_label = tk.Label(item_frame, text="■", fg=color, font=("Arial", 12))
+			color_label.pack(side=tk.LEFT)
+			
+			# Description
+			desc_label = ttk.Label(item_frame, text=description, font=("Arial", 9))
+			desc_label.pack(side=tk.LEFT, padx=(2, 0))
+		
+		# Model accuracy display frame
+		accuracy_frame = ttk.LabelFrame(main_frame, text="Model Accuracies (Filtered Results)")
+		accuracy_frame.pack(fill=tk.X, pady=(10, 5))
+		
+		# Create accuracy display
+		accuracy_display = ttk.Frame(accuracy_frame)
+		accuracy_display.pack(fill=tk.X, padx=10, pady=5)
+		
+		# Status bar
+		status_frame = ttk.Frame(main_frame)
+		status_frame.pack(fill=tk.X, pady=(10, 0))
+		self.status_label = ttk.Label(status_frame, text="Ready")
+		self.status_label.pack(side=tk.LEFT)
+		
+		# Load initial data
+		self._refresh_predictions_results_view(results_tree, split_var, group_var, correct_var, accuracy_frame)
 		
 		self._append("Predictions on all instances completed successfully!\n")
+	
+	def _refresh_predictions_results_view(self, tree, split_var, group_var, correct_var, accuracy_frame):
+		"""Refresh the predictions results tree view based on filters - exact copy of main results viewer"""
+		# Clear existing items
+		for item in tree.get_children():
+			tree.delete(item)
+		
+		# Get filter values
+		selected_split = split_var.get()
+		selected_group = group_var.get()
+		selected_correct = correct_var.get()
+		
+		# Get model names
+		model_names = list(self.all_predictions.keys())
+		
+		# Get all unique tree IDs from all models
+		all_tree_ids = set()
+		for df in self.all_predictions.values():
+			all_tree_ids.update(df['tree_id'].unique())
+		
+		# Create a combined dataframe for each tree_id
+		combined_data = []
+		for tree_id in sorted(all_tree_ids):
+			# Get data for this tree_id from all models
+			tree_data = {'tree_id': tree_id}
+			
+			# Get actual group and split from first model (should be same for all)
+			first_model_data = next(iter(self.all_predictions.values()))
+			tree_row = first_model_data[first_model_data['tree_id'] == tree_id]
+			if tree_row.empty:
+				continue
+			
+			tree_data['actual_group'] = tree_row.iloc[0]['actual_group']
+			tree_data['split'] = tree_row.iloc[0]['split']
+			
+			# Apply filters
+			if selected_split != "All" and tree_data['split'] != selected_split:
+				continue
+			
+			if selected_group != "All Groups" and str(tree_data['actual_group']) != selected_group:
+				continue
+			
+			# Get predictions from all models
+			all_correct = True
+			all_incorrect = True
+			for model_name in model_names:
+				model_df = self.all_predictions[model_name]
+				model_row = model_df[model_df['tree_id'] == tree_id]
+				
+				if not model_row.empty:
+					pred = model_row.iloc[0]['predicted_group']
+					is_correct = model_row.iloc[0]['is_correct']
+					
+					if pd.notna(pred):
+						# Add enhanced visual indicators for correct/incorrect predictions
+						if is_correct:
+							tree_data[model_name] = f"✅ {pred}"
+							all_incorrect = False
+						else:
+							tree_data[model_name] = f"❌ {pred}"
+							all_correct = False
+					else:
+						tree_data[model_name] = "➖ N/A"
+						all_correct = False
+						all_incorrect = False
+				else:
+					tree_data[model_name] = "N/A"
+					all_correct = False
+					all_incorrect = False
+			
+			# Apply correctness filter
+			if selected_correct == "Correct" and not all_correct:
+				continue
+			elif selected_correct == "Incorrect" and not all_incorrect:
+				continue
+			
+			# Add to combined data
+			row_values = [tree_data['tree_id'], tree_data['actual_group'], tree_data['split']]
+			for model_name in model_names:
+				row_values.append(tree_data.get(model_name, "N/A"))
+			
+			combined_data.append(row_values)
+		
+		# Configure tags for different accuracy levels
+		tree.tag_configure("perfect", background="#90EE90")  # 100% correct
+		tree.tag_configure("excellent", background="#98FB98")  # 80-99% correct
+		tree.tag_configure("good", background="#ADFF2F")  # 60-79% correct
+		tree.tag_configure("neutral", background="#FFFF99")  # 40-59% correct or all N/A
+		tree.tag_configure("poor", background="#FFB366")  # 20-39% correct
+		tree.tag_configure("bad", background="#FF9999")  # 1-19% correct
+		tree.tag_configure("terrible", background="#FFB6C1")  # 0% correct
+		
+		# Insert data into tree with enhanced visual indicators and color coding
+		for data in combined_data:
+			# Calculate accuracy for this row (how many models got it right)
+			correct_count = 0
+			total_models = len(model_names)
+			na_count = 0
+			
+			# Count correct predictions (skip first 3 columns: tree_id, actual_group, split)
+			for i in range(3, len(data)):
+				cell_value = data[i]
+				if isinstance(cell_value, str) and cell_value.startswith("✅"):
+					correct_count += 1
+				elif isinstance(cell_value, str) and (cell_value == "N/A" or cell_value == "➖ N/A"):
+					na_count += 1
+			
+			# Adjust total models by removing N/A predictions
+			total_models -= na_count
+			
+			# Calculate accuracy percentage
+			if total_models > 0:
+				accuracy_percentage = correct_count / total_models
+			elif na_count == len(model_names):
+				# All predictions are N/A (e.g., training data) - treat as neutral
+				accuracy_percentage = 0.5  # Neutral color (yellow)
+			else:
+				accuracy_percentage = 0
+			
+			# Determine tag based on accuracy
+			if accuracy_percentage == 1.0:
+				tag = "perfect"
+			elif accuracy_percentage >= 0.8:
+				tag = "excellent"
+			elif accuracy_percentage >= 0.6:
+				tag = "good"
+			elif accuracy_percentage >= 0.4:
+				tag = "neutral"
+			elif accuracy_percentage >= 0.2:
+				tag = "poor"
+			elif accuracy_percentage > 0:
+				tag = "bad"
+			else:
+				tag = "terrible"
+			
+			# Insert row with tag
+			item = tree.insert("", tk.END, values=data, tags=(tag,))
+		
+		# Update status with color coding information
+		total_samples = len(combined_data)
+		self.status_label.config(text=f"Showing {total_samples} samples across {len(model_names)} models | Row colors indicate how many models correctly classified each instance")
+		
+		# Calculate and display per-model accuracies
+		self._update_predictions_model_accuracies(combined_data, model_names, accuracy_frame)
+	
+	def _update_predictions_model_accuracies(self, combined_data, model_names, accuracy_frame):
+		"""Update the model accuracy display based on filtered data - exact copy of main results viewer"""
+		# Clear existing accuracy labels
+		for widget in accuracy_frame.winfo_children():
+			if isinstance(widget, ttk.Frame):
+				widget.destroy()
+		
+		# Create new accuracy display
+		accuracy_display = ttk.Frame(accuracy_frame)
+		accuracy_display.pack(fill=tk.X, padx=10, pady=5)
+		
+		# Calculate accuracies for each model
+		model_accuracies = {}
+		for model_name in model_names:
+			correct_count = 0
+			total_count = 0
+			
+			# Find the column index for this model (skip first 3 columns)
+			model_col_idx = 3 + model_names.index(model_name)
+			
+			for data in combined_data:
+				cell_value = data[model_col_idx]
+				if isinstance(cell_value, str) and not (cell_value == "N/A" or cell_value == "➖ N/A"):
+					total_count += 1
+					if cell_value.startswith("✅"):
+						correct_count += 1
+			
+			if total_count > 0:
+				accuracy = correct_count / total_count
+				model_accuracies[model_name] = accuracy
+			else:
+				model_accuracies[model_name] = 0.0
+		
+		# Sort models by accuracy (descending)
+		sorted_models = sorted(model_accuracies.items(), key=lambda x: x[1], reverse=True)
+		
+		# Display accuracies in a single row
+		for model_name, accuracy in sorted_models:
+			# Create frame for this model's accuracy
+			model_frame = ttk.Frame(accuracy_display)
+			model_frame.pack(side=tk.LEFT, padx=10)
+			
+			# Model name
+			name_label = ttk.Label(model_frame, text=f"{model_name}:", font=("Arial", 9, "bold"))
+			name_label.pack(side=tk.LEFT)
+			
+			# Accuracy value with color coding
+			accuracy_text = f"{accuracy:.3f} ({accuracy*100:.1f}%)"
+			accuracy_label = ttk.Label(model_frame, text=accuracy_text, font=("Arial", 9))
+			accuracy_label.pack(side=tk.LEFT, padx=(5, 0))
 	
 	def _save_all_predictions(self):
 		"""Save predictions on all instances to CSV"""

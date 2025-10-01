@@ -11,9 +11,11 @@ A user-friendly desktop application for training and comparing multiple machine 
 - **Real-time Progress**: See which model is training with timing and accuracy updates
 - **Interactive Results**: Click any result row to see detailed per-class metrics, accuracy analysis, and top 10 hyperparameter attempts
 - **Results Viewer**: Side-by-side comparison of individual sample predictions across all models with color-coded correctness indicators and filtering
+- **Predict All Instances**: Use trained models to predict on the entire dataset with model selection via main window checkboxes
+- **Model Persistence**: Save and load trained models and results for later use
 - **Visual Charts**: Popup charts showing model performance comparisons
 - **Data Preprocessing**: Automatic missing value imputation and feature scaling
-- **Feature Importance**: SHAP-based feature importance analysis and visualization
+- **Feature Importance**: SHAP-based feature importance analysis and visualization for top 4 models
 - **Resource Control**: Configure CPU usage (n_jobs) and random state for optimal performance and reproducibility
 - **Export Results**: Save predictions and detailed metrics to CSV
 
@@ -30,16 +32,20 @@ python -m src.gui_app
 ```
 
 3. **Use the Interface**
-   - Load your CSV file (defaults to `tree_features.csv` if present)
+   - Load your CSV file (defaults to `species_features.csv` if present)
    - Select target column (defaults to `group_id`)
-   - Choose features using checkboxes
+   - Choose features using checkboxes (Common Name unchecked by default)
    - Pick algorithms to train
    - Configure hyperparameters by clicking "Configure [Algorithm]"
-   - Analyze feature importance by clicking "Feature Importance" (after training)
-   - View detailed results by clicking "View Results" (after training)
+   - Click "🚀 Run Training" and watch real-time progress
+   - View detailed results by clicking "📊 View Results" (after training)
+   - Predict on all instances by clicking "🔮 Predict All (Selected)" (uses selected algorithms)
+   - Analyze feature importance by clicking "Feature Importance" (shows top 4 models)
+   - Save trained models by clicking "💾 Save Models" for later use
+   - Load previously saved models by clicking "📂 Load Models"
+   - View performance charts by clicking "📈 Show Charts"
    - Adjust n_jobs for CPU usage control (default: 8 cores)
    - Set random state for reproducibility (default: 42)
-   - Click "Run" and watch real-time progress
    - Double-click result rows for detailed metrics and hyperparameter analysis
 
 ## Supported Algorithms
@@ -83,12 +89,15 @@ muML/
 - **Individual Sample Analysis**: Side-by-side comparison of predictions for each sample across all models with visual correctness indicators
 - **Color-Coded Results**: Green for correct predictions, red for incorrect, with row-level highlighting
 - **Advanced Filtering**: Filter results by train/test split, group, and correctness
+- **Predict All Dataset**: Use trained models to predict on entire dataset with identical results viewer
+- **Model Persistence**: Save and load complete training sessions including models, results, and predictions
 - **Adaptive Cross-Validation**: Automatically adjusts CV folds based on smallest class size for optimal performance
 - **Class Balancing**: Automatic handling of imbalanced datasets
 - **Progress Tracking**: Real-time updates during training
 - **Detailed Metrics**: Per-class precision, recall, F1-score, support, producer's accuracy, mean class accuracy, and kappa accuracy
 - **Resource Management**: Control CPU usage with n_jobs parameter and random state for reproducibility
 - **Interactive Configuration**: Separate checkboxes for algorithm selection and configure buttons for hyperparameters
+- **Streamlined Prediction**: Direct algorithm selection from main window checkboxes for predictions
 
 ### Detailed Accuracy Metrics
 
@@ -110,6 +119,27 @@ muML ensures reproducible results through comprehensive random state control:
 - **SHAP Analysis**: Feature importance analysis uses consistent random state
 
 **Default**: Random state 42 (ensures reproducible results out of the box)
+
+### Model Persistence
+
+muML allows you to save and load complete training sessions:
+
+- **Save Models**: Click "💾 Save Models" to save trained models, results, and predictions
+- **Load Models**: Click "📂 Load Models" to restore previous training sessions
+- **Complete State**: Saves all models, hyperparameters, results, and predictions
+- **Timestamp Tracking**: Each save includes timestamp and version information
+- **Easy Sharing**: Share complete training sessions with colleagues
+
+### Predict All Instances
+
+Use trained models to predict on the entire dataset:
+
+- **Algorithm Selection**: Uses checkboxes from main window (no popup needed)
+- **Full Dataset**: Predicts on all instances in the loaded dataset
+- **Results Viewer**: Identical interface to main results viewer with filtering
+- **Model Comparison**: Side-by-side comparison of all model predictions
+- **Color Coding**: Visual indicators for correct/incorrect predictions
+- **Export Results**: Save predictions to CSV for further analysis
 
 ## Installation Notes
 

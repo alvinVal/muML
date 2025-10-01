@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 import threading
 import warnings
+import pickle
+import os
+from datetime import datetime
 from typing import Dict, List, Any
 
 import tkinter as tk
@@ -47,6 +50,9 @@ class MLGuiApp(ttk.Frame):
 		self.custom_params: Dict[str, Dict[str, Any]] = {}
 		self.search_strategies: Dict[str, tk.StringVar] = {}
 		self.all_predictions: Dict[str, pd.DataFrame] = {}
+		self.trained_models: Dict[str, Any] = {}  # Store trained models
+		self.all_predictions_df: pd.DataFrame | None = None  # Store predictions on all instances
+		self.last_results_df: pd.DataFrame | None = None  # Store last training results for charts
 
 		self.feature_vars: Dict[str, tk.BooleanVar] = {}
 
@@ -55,20 +61,26 @@ class MLGuiApp(ttk.Frame):
 	def _build_ui(self):
 		self.master.title("muML - Multiple Machine Learning Algorithms")
 		self.master.geometry("1600x900")
+		
+		# Configure modern styling
+		self._configure_styles()
+		
+		# Set main window background
+		self.master.configure(bg=self.colors['light'])
 
 		# Top controls
 		top = ttk.Frame(self)
 		top.pack(fill=tk.X, padx=10, pady=8)
 
-		self.file_var = tk.StringVar(value="tree_features.csv")
-		file_entry = ttk.Entry(top, textvariable=self.file_var, width=80)
+		self.file_var = tk.StringVar(value="species_features.csv")
+		file_entry = ttk.Entry(top, textvariable=self.file_var, width=80, style='Modern.TEntry')
 		file_entry.pack(side=tk.LEFT, padx=(0, 8))
 
-		browse_btn = ttk.Button(top, text="Browse CSV", command=self._browse_csv)
+		browse_btn = ttk.Button(top, text="📁 Browse CSV", command=self._browse_csv, style='Info.TButton')
 		browse_btn.pack(side=tk.LEFT)
 
 		# Options frame
-		opts = ttk.LabelFrame(self, text="Options")
+		opts = ttk.LabelFrame(self, text="Options", style='Modern.TLabelframe')
 		opts.pack(fill=tk.X, padx=10, pady=8)
 
 		self.target_var = tk.StringVar(value="group_id")
@@ -84,29 +96,29 @@ class MLGuiApp(ttk.Frame):
 		row1 = ttk.Frame(opts)
 		row1.pack(fill=tk.X, padx=8, pady=4)
 		ttk.Label(row1, text="Target:").pack(side=tk.LEFT)
-		self.target_cb = ttk.Combobox(row1, textvariable=self.target_var, state="readonly", width=30, values=self.columns)
+		self.target_cb = ttk.Combobox(row1, textvariable=self.target_var, state="readonly", width=30, values=self.columns, style='Modern.TCombobox')
 		self.target_cb.pack(side=tk.LEFT, padx=6)
 
 		ttk.Label(row1, text="ID column:").pack(side=tk.LEFT)
-		self.id_cb = ttk.Combobox(row1, textvariable=self.id_var, state="readonly", width=20, values=self.columns)
+		self.id_cb = ttk.Combobox(row1, textvariable=self.id_var, state="readonly", width=20, values=self.columns, style='Modern.TCombobox')
 		self.id_cb.pack(side=tk.LEFT, padx=6)
 
 		ttk.Label(row1, text="Test size:").pack(side=tk.LEFT)
-		test_entry = ttk.Entry(row1, textvariable=self.test_size_var, width=8)
+		test_entry = ttk.Entry(row1, textvariable=self.test_size_var, width=8, style='Modern.TEntry')
 		test_entry.pack(side=tk.LEFT, padx=6)
 
 		strat_cb = ttk.Checkbutton(row1, text="Stratify", variable=self.stratify_var)
 		strat_cb.pack(side=tk.LEFT, padx=6)
 
 		ttk.Label(row1, text="n_jobs:").pack(side=tk.LEFT, padx=(10, 0))
-		n_jobs_entry = ttk.Entry(row1, textvariable=self.n_jobs_var, width=8)
+		n_jobs_entry = ttk.Entry(row1, textvariable=self.n_jobs_var, width=8, style='Modern.TEntry')
 		n_jobs_entry.pack(side=tk.LEFT, padx=6)
 		ttk.Label(row1, text="(uses 8 cores by default, -1 to use all cores)", font=("Arial", 8), 
 				 foreground="gray").pack(side=tk.LEFT, padx=6)
 		
 		# Random state control
 		ttk.Label(row1, text="Random State:").pack(side=tk.LEFT, padx=(20, 0))
-		random_state_entry = ttk.Entry(row1, textvariable=self.random_state_var, width=8)
+		random_state_entry = ttk.Entry(row1, textvariable=self.random_state_var, width=8, style='Modern.TEntry')
 		random_state_entry.pack(side=tk.LEFT, padx=6)
 		ttk.Label(row1, text="(controls reproducibility)", font=("Arial", 8), 
 				 foreground="gray").pack(side=tk.LEFT, padx=6)
@@ -115,18 +127,18 @@ class MLGuiApp(ttk.Frame):
 		mid = ttk.Frame(self)
 		mid.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
-		feat_frame = ttk.LabelFrame(mid, text="Features")
+		feat_frame = ttk.LabelFrame(mid, text="🎯 Features", style='Modern.TLabelframe')
 		feat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 8))
 		feat_frame.configure(width=200)
 
 		# Feature control buttons
 		feat_ctrl = ttk.Frame(feat_frame)
 		feat_ctrl.pack(fill=tk.X, padx=8, pady=4)
-		ttk.Button(feat_ctrl, text="Select All", command=self._select_all_features).pack(side=tk.LEFT)
-		ttk.Button(feat_ctrl, text="Select None", command=self._select_none_features).pack(side=tk.LEFT, padx=6)
+		ttk.Button(feat_ctrl, text="✅ Select All", command=self._select_all_features, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 3))
+		ttk.Button(feat_ctrl, text="❌ Select None", command=self._select_none_features, style='Danger.TButton').pack(side=tk.LEFT, padx=3)
 		
 		# SHAP feature importance button
-		shap_btn = ttk.Button(feat_ctrl, text="Feature Importance", command=self._show_feature_importance)
+		shap_btn = ttk.Button(feat_ctrl, text="📈 Feature Importance", command=self._show_feature_importance, style='Info.TButton')
 		shap_btn.pack(side=tk.RIGHT)
 
 		# Scrollable checkbox area
@@ -145,7 +157,7 @@ class MLGuiApp(ttk.Frame):
 		algo_hp_frame = ttk.Frame(mid)
 		algo_hp_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-		algo_frame = ttk.LabelFrame(algo_hp_frame, text="Algorithms")
+		algo_frame = ttk.LabelFrame(algo_hp_frame, text="🤖 Algorithms", style='Modern.TLabelframe')
 		algo_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 4))
 		algo_frame.configure(width=200)
 		self.algo_checks: Dict[str, ttk.Checkbutton] = {}
@@ -163,7 +175,7 @@ class MLGuiApp(ttk.Frame):
 			self.algo_buttons[name] = btn
 
 		# Hyperparameters frame
-		self.hp_frame = ttk.LabelFrame(algo_hp_frame, text="Hyperparameters")
+		self.hp_frame = ttk.LabelFrame(algo_hp_frame, text="⚙️ Hyperparameters", style='Modern.TLabelframe')
 		self.hp_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0))
 		self.hp_frame.configure(width=500)
 		
@@ -182,27 +194,44 @@ class MLGuiApp(ttk.Frame):
 		# Action buttons
 		act = ttk.Frame(self)
 		act.pack(fill=tk.X, padx=10, pady=8)
-		self.run_btn = ttk.Button(act, text="Run", command=self._on_run)
-		self.run_btn.pack(side=tk.LEFT)
-		save_btn = ttk.Button(act, text="Save predictions CSV", command=self._save_predictions)
-		save_btn.pack(side=tk.LEFT, padx=8)
-		copy_btn = ttk.Button(act, text="Copy Output", command=self._copy_output)
-		copy_btn.pack(side=tk.LEFT, padx=8)
-		results_btn = ttk.Button(act, text="View Results", command=self._show_results_viewer)
+		
+		# Main action buttons
+		self.run_btn = ttk.Button(act, text="🚀 Run Training", command=self._on_run, style='Primary.TButton')
+		self.run_btn.pack(side=tk.LEFT, padx=(0, 5))
+		
+		# Data management buttons
+		save_btn = ttk.Button(act, text="💾 Save Predictions", command=self._save_predictions, style='Success.TButton')
+		save_btn.pack(side=tk.LEFT, padx=5)
+		copy_btn = ttk.Button(act, text="📋 Copy Output", command=self._copy_output, style='Warning.TButton')
+		copy_btn.pack(side=tk.LEFT, padx=5)
+		
+		# Prediction and model management buttons
+		predict_all_btn = ttk.Button(act, text="🔮 Predict All", command=self._predict_all_instances, style='Info.TButton')
+		predict_all_btn.pack(side=tk.LEFT, padx=5)
+		save_models_btn = ttk.Button(act, text="💾 Save Models", command=self._save_models, style='Success.TButton')
+		save_models_btn.pack(side=tk.LEFT, padx=5)
+		load_models_btn = ttk.Button(act, text="📂 Load Models", command=self._load_models, style='Secondary.TButton')
+		load_models_btn.pack(side=tk.LEFT, padx=5)
+		
+		# Results and charts buttons
+		results_btn = ttk.Button(act, text="📊 View Results", command=self._show_results_viewer, style='Info.TButton')
 		results_btn.pack(side=tk.RIGHT)
+		charts_btn = ttk.Button(act, text="📈 Show Charts", command=self._show_charts, style='Info.TButton')
+		charts_btn.pack(side=tk.RIGHT, padx=(5, 0))
 
 		# Bottom: output + results table
 		bottom = ttk.Frame(self)
 		bottom.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
 		# Output text with scrollbar
-		out = ttk.LabelFrame(bottom, text="Output")
+		out = ttk.LabelFrame(bottom, text="📝 Output", style='Modern.TLabelframe')
 		out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 		
 		output_frame = ttk.Frame(out)
 		output_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 		
-		self.output = tk.Text(output_frame, height=16)
+		self.output = tk.Text(output_frame, height=16, bg=self.colors['white'], fg=self.colors['dark'], 
+							 font=('Consolas', 9), relief='solid', borderwidth=1)
 		output_scroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
 		self.output.configure(yscrollcommand=output_scroll.set)
 		
@@ -210,13 +239,13 @@ class MLGuiApp(ttk.Frame):
 		output_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
 		# Results table
-		table_frame = ttk.LabelFrame(bottom, text="Results Table")
+		table_frame = ttk.LabelFrame(bottom, text="📊 Results Table", style='Modern.TLabelframe')
 		table_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
 		
 		table_container = ttk.Frame(table_frame)
 		table_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 		
-		self.results_table = ttk.Treeview(table_container, columns=("Classifier", "Accuracy", "F1-Score"), show="headings")
+		self.results_table = ttk.Treeview(table_container, columns=("Classifier", "Accuracy", "F1-Score"), show="headings", style='Modern.Treeview')
 		self.results_table.heading("Classifier", text="Classifier")
 		self.results_table.heading("Accuracy", text="Accuracy")
 		self.results_table.heading("F1-Score", text="F1-Score")
@@ -242,6 +271,123 @@ class MLGuiApp(ttk.Frame):
 
 		# Try to preload defaults if file exists
 		self._try_preload_defaults()
+	
+	def _configure_styles(self):
+		"""Configure modern styling for the application"""
+		# Create style object
+		self.style = ttk.Style()
+		
+		# Define color scheme with maximum contrast
+		self.colors = {
+			'primary': '#0D4F6B',      # Very dark blue for maximum contrast
+			'secondary': '#6B1A4A',    # Very dark purple for maximum contrast
+			'success': '#B8650A',      # Very dark orange for maximum contrast
+			'danger': '#8B1A0F',       # Very dark red for maximum contrast
+			'warning': '#D4B85A',      # Medium yellow with dark text
+			'info': '#2A7A73',         # Very dark teal for maximum contrast
+			'light': '#F7F7F7',        # Light gray
+			'dark': '#2C3E50',         # Dark blue-gray
+			'white': '#FFFFFF',
+			'black': '#000000'         # Pure black for maximum contrast
+		}
+		
+		# Plain button styles with light backgrounds and dark text
+		self.style.configure('Primary.TButton',
+							background='lightblue',  # Light blue
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		self.style.configure('Success.TButton',
+							background='lightgreen',  # Light green
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		self.style.configure('Danger.TButton',
+							background='lightcoral',  # Light red
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		self.style.configure('Info.TButton',
+							background='lightcyan',  # Light cyan
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		self.style.configure('Warning.TButton',
+							background='lightyellow',  # Light yellow
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		self.style.configure('Secondary.TButton',
+							background='plum',  # Light purple
+							foreground='black',  # Black text
+							font=('Arial', 10, 'bold'))
+		
+		# Configure frame styles
+		self.style.configure('Card.TFrame',
+							background=self.colors['white'],
+							relief='solid',
+							borderwidth=1)
+		
+		# Configure label frame styles
+		self.style.configure('Modern.TLabelframe',
+							background=self.colors['light'],
+							foreground=self.colors['dark'],
+							font=('Arial', 11, 'bold'))
+		
+		self.style.configure('Modern.TLabelframe.Label',
+							background=self.colors['light'],
+							foreground=self.colors['primary'],
+							font=('Arial', 11, 'bold'))
+		
+		# Configure entry styles
+		self.style.configure('Modern.TEntry',
+							fieldbackground=self.colors['white'],
+							borderwidth=2,
+							relief='solid')
+		
+		# Configure combobox styles
+		self.style.configure('Modern.TCombobox',
+							fieldbackground=self.colors['white'],
+							borderwidth=2,
+							relief='solid')
+		
+		# Configure treeview styles
+		self.style.configure('Modern.Treeview',
+							background=self.colors['white'],
+							foreground=self.colors['dark'],
+							fieldbackground=self.colors['white'],
+							font=('Arial', 9))
+		
+		self.style.configure('Modern.Treeview.Heading',
+							background=self.colors['primary'],
+							foreground=self.colors['white'],
+							font=('Arial', 10, 'bold'))
+		
+		# Configure text widget
+		self.style.configure('Modern.Text',
+							background=self.colors['white'],
+							foreground=self.colors['dark'],
+							font=('Consolas', 9))
+		
+		# Light background hover effects
+		self.style.map('Primary.TButton',
+					  background=[('active', 'skyblue'), ('pressed', 'steelblue')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
+		self.style.map('Success.TButton',
+					  background=[('active', 'limegreen'), ('pressed', 'green')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
+		self.style.map('Danger.TButton',
+					  background=[('active', 'salmon'), ('pressed', 'red')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
+		self.style.map('Info.TButton',
+					  background=[('active', 'aqua'), ('pressed', 'blue')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
+		self.style.map('Warning.TButton',
+					  background=[('active', 'gold'), ('pressed', 'orange')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
+		self.style.map('Secondary.TButton',
+					  background=[('active', 'violet'), ('pressed', 'purple')],
+					  foreground=[('active', 'black'), ('pressed', 'white')])
 
 	def _copy_output(self):
 		try:
@@ -281,7 +427,9 @@ class MLGuiApp(ttk.Frame):
 		for c in cols:
 			if (current_target and c == current_target) or (current_id and c == current_id):
 				continue
-			var = tk.BooleanVar(value=True)
+			# Set "Common Name" to unchecked by default, all others checked
+			default_value = False if c == "Common Name" else True
+			var = tk.BooleanVar(value=default_value)
 			self.feature_vars[c] = var
 			cb = ttk.Checkbutton(self.feat_inner, text=c, variable=var)
 			cb.pack(anchor=tk.W, padx=4, pady=2)
@@ -651,6 +799,14 @@ class MLGuiApp(ttk.Frame):
 		text_widget.insert(tk.END, content)
 		text_widget.config(state=tk.DISABLED)
 
+	def _show_charts(self):
+		"""Show charts from the last training run"""
+		if not hasattr(self, 'last_results_df') or self.last_results_df is None or self.last_results_df.empty:
+			messagebox.showwarning("Missing", "Train models first to view charts.")
+			return
+		
+		self._draw_charts(self.last_results_df)
+	
 	def _draw_charts(self, results_df: pd.DataFrame):
 		if results_df.empty:
 			return
@@ -753,11 +909,21 @@ class MLGuiApp(ttk.Frame):
 				# Store detailed results for clickable table
 				self.detailed_results = best.get("detailed_results", {})
 				
+				# Store trained models for later use
+				self.trained_models = {}
+				for name, model_results in self.detailed_results.items():
+					if 'best_estimator' in model_results:
+						self.trained_models[name] = model_results['best_estimator']
+				
 				# Build predictions for all models
 				self.all_predictions = build_all_predictions_df(prep, self.detailed_results)
 				
 				self._append("\n")
 				self._append("Training completed successfully!\n")
+				
+				# Store results for charts button
+				self.last_results_df = results
+				
 				self._show_results_table(results)
 				self._draw_charts(results)
 				best_name = best.get("best_name")
@@ -1100,6 +1266,292 @@ class MLGuiApp(ttk.Frame):
 			messagebox.showerror("Error", f"Failed to display SHAP plots: {e}")
 			self._append(f"SHAP display error: {e}\n")
 
+
+	def _predict_all_instances(self):
+		"""Predict on all instances in the dataset using trained models"""
+		if not hasattr(self, 'trained_models') or not self.trained_models:
+			messagebox.showwarning("Missing", "Train models first to make predictions.")
+			return
+		
+		if self.df is None:
+			messagebox.showwarning("Missing", "Load a dataset first.")
+			return
+		
+		# Get selected features
+		selected_features = [name for name, var in self.feature_vars.items() if var.get()]
+		if not selected_features:
+			messagebox.showwarning("Missing", "Select at least one feature.")
+			return
+		
+		# Get target and ID columns
+		target = self.target_var.get()
+		id_col = self.id_var.get() if self.id_var.get() else None
+		
+		if not target:
+			messagebox.showwarning("Missing", "Select a target column.")
+			return
+		
+		# Prepare data for prediction
+		try:
+			# Create a copy of the dataframe
+			df_copy = self.df.copy()
+			
+			# Handle missing values
+			from src.preprocess import SimpleImputer
+			imputer = SimpleImputer(strategy="mean")
+			X = df_copy[selected_features].copy()
+			X_imputed = imputer.fit_transform(X)
+			X_imputed = pd.DataFrame(X_imputed, columns=selected_features, index=X.index)
+			
+			# Scale features
+			from sklearn.preprocessing import StandardScaler
+			scaler = StandardScaler()
+			X_scaled = scaler.fit_transform(X_imputed)
+			
+			# Make predictions with all trained models
+			predictions_data = []
+			model_names = list(self.trained_models.keys())
+			
+			for model_name, model in self.trained_models.items():
+				try:
+					# Make predictions
+					y_pred = model.predict(X_scaled)
+					
+					# Get prediction probabilities if available
+					try:
+						y_proba = model.predict_proba(X_scaled)
+						confidence = np.max(y_proba, axis=1)
+					except:
+						confidence = np.ones(len(y_pred))  # Default confidence
+					
+					# Store predictions
+					for i, (pred, conf) in enumerate(zip(y_pred, confidence)):
+						predictions_data.append({
+							'model': model_name,
+							'instance_id': df_copy.index[i] if id_col is None else df_copy.iloc[i][id_col],
+							'prediction': pred,
+							'confidence': conf
+						})
+					
+					self._append(f"Generated predictions for {model_name}: {len(y_pred)} instances\n")
+					
+				except Exception as e:
+					self._append(f"Error predicting with {model_name}: {e}\n")
+					continue
+			
+			# Create predictions dataframe
+			self.all_predictions_df = pd.DataFrame(predictions_data)
+			
+			# Show results
+			self._show_all_predictions_results()
+			
+		except Exception as e:
+			messagebox.showerror("Error", f"Failed to make predictions: {e}")
+			self._append(f"Prediction error: {e}\n")
+	
+	def _show_all_predictions_results(self):
+		"""Show results of predictions on all instances"""
+		if self.all_predictions_df is None:
+			return
+		
+		# Create results window
+		predictions_window = tk.Toplevel(self.master)
+		predictions_window.title("muML - Predictions on All Instances")
+		predictions_window.geometry("1400x800")
+		
+		# Main frame
+		main_frame = ttk.Frame(predictions_window)
+		main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+		
+		# Title
+		title_label = ttk.Label(main_frame, text="Predictions on All Dataset Instances", 
+							   font=("Arial", 14, "bold"))
+		title_label.pack(pady=(0, 10))
+		
+		# Summary statistics
+		summary_frame = ttk.LabelFrame(main_frame, text="Summary Statistics")
+		summary_frame.pack(fill=tk.X, pady=(0, 10))
+		
+		summary_text = f"Total predictions: {len(self.all_predictions_df)}\n"
+		summary_text += f"Models used: {', '.join(self.all_predictions_df['model'].unique())}\n"
+		summary_text += f"Instances predicted: {self.all_predictions_df['instance_id'].nunique()}\n"
+		
+		summary_label = ttk.Label(summary_frame, text=summary_text, font=("Arial", 10))
+		summary_label.pack(padx=10, pady=5)
+		
+		# Pivot table for better visualization
+		pivot_df = self.all_predictions_df.pivot_table(
+			index='instance_id', 
+			columns='model', 
+			values='prediction', 
+			aggfunc='first'
+		).fillna('N/A')
+		
+		# Create treeview for results
+		tree_frame = ttk.Frame(main_frame)
+		tree_frame.pack(fill=tk.BOTH, expand=True)
+		
+		# Get columns
+		columns = ['instance_id'] + list(pivot_df.columns)
+		
+		# Create treeview
+		results_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=20)
+		
+		# Configure columns
+		results_tree.heading("instance_id", text="Instance ID")
+		results_tree.column("instance_id", width=100, anchor=tk.CENTER)
+		
+		for model_name in pivot_df.columns:
+			results_tree.heading(model_name, text=model_name)
+			results_tree.column(model_name, width=120, anchor=tk.CENTER)
+		
+		# Add scrollbars
+		tree_scroll_v = ttk.Scrollbar(tree_frame, orient="vertical", command=results_tree.yview)
+		tree_scroll_h = ttk.Scrollbar(tree_frame, orient="horizontal", command=results_tree.xview)
+		results_tree.configure(yscrollcommand=tree_scroll_v.set, xscrollcommand=tree_scroll_h.set)
+		
+		# Pack treeview and scrollbars
+		results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+		tree_scroll_v.pack(side=tk.RIGHT, fill=tk.Y)
+		tree_scroll_h.pack(side=tk.BOTTOM, fill=tk.X)
+		
+		# Insert data
+		for idx, row in pivot_df.iterrows():
+			values = [idx] + [row[col] for col in pivot_df.columns]
+			results_tree.insert("", tk.END, values=values)
+		
+		# Save button
+		save_frame = ttk.Frame(main_frame)
+		save_frame.pack(fill=tk.X, pady=(10, 0))
+		
+		save_btn = ttk.Button(save_frame, text="Save Predictions CSV", 
+							 command=lambda: self._save_all_predictions())
+		save_btn.pack(side=tk.LEFT)
+		
+		self._append("Predictions on all instances completed successfully!\n")
+	
+	def _save_all_predictions(self):
+		"""Save predictions on all instances to CSV"""
+		if self.all_predictions_df is None:
+			messagebox.showwarning("Missing", "No predictions to save.")
+			return
+		
+		filename = filedialog.asksaveasfilename(
+			defaultextension=".csv",
+			filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+			title="Save All Predictions"
+		)
+		
+		if filename:
+			try:
+				self.all_predictions_df.to_csv(filename, index=False)
+				messagebox.showinfo("Success", f"Predictions saved to {filename}")
+				self._append(f"Predictions saved to {filename}\n")
+			except Exception as e:
+				messagebox.showerror("Error", f"Failed to save predictions: {e}")
+				self._append(f"Save error: {e}\n")
+
+	def _save_models(self):
+		"""Save trained models and results to a file"""
+		if not hasattr(self, 'trained_models') or not self.trained_models:
+			messagebox.showwarning("Missing", "Train models first to save.")
+			return
+		
+		filename = filedialog.asksaveasfilename(
+			defaultextension=".pkl",
+			filetypes=[("Pickle files", "*.pkl"), ("All files", "*.*")],
+			title="Save Models and Results"
+		)
+		
+		if filename:
+			try:
+				# Prepare data to save
+				save_data = {
+					'trained_models': self.trained_models,
+					'detailed_results': self.detailed_results,
+					'all_predictions': self.all_predictions,
+					'predictions_df': self.predictions_df,
+					'all_predictions_df': self.all_predictions_df,
+					'custom_params': self.custom_params,
+					'search_strategies': {k: v.get() for k, v in self.search_strategies.items()},
+					'random_state': self.random_state,
+					'timestamp': datetime.now().isoformat(),
+					'version': '1.0'
+				}
+				
+				# Save to file
+				with open(filename, 'wb') as f:
+					pickle.dump(save_data, f)
+				
+				messagebox.showinfo("Success", f"Models and results saved to {filename}")
+				self._append(f"Models and results saved to {filename}\n")
+				
+			except Exception as e:
+				messagebox.showerror("Error", f"Failed to save models: {e}")
+				self._append(f"Save error: {e}\n")
+	
+	def _load_models(self):
+		"""Load trained models and results from a file"""
+		filename = filedialog.askopenfilename(
+			filetypes=[("Pickle files", "*.pkl"), ("All files", "*.*")],
+			title="Load Models and Results"
+		)
+		
+		if filename:
+			try:
+				# Load from file
+				with open(filename, 'rb') as f:
+					load_data = pickle.load(f)
+				
+				# Validate version compatibility
+				if 'version' not in load_data:
+					messagebox.showwarning("Warning", "This file was created with an older version. Some features may not work correctly.")
+				
+				# Load data
+				self.trained_models = load_data.get('trained_models', {})
+				self.detailed_results = load_data.get('detailed_results', {})
+				self.all_predictions = load_data.get('all_predictions', {})
+				self.predictions_df = load_data.get('predictions_df', None)
+				self.all_predictions_df = load_data.get('all_predictions_df', None)
+				self.custom_params = load_data.get('custom_params', {})
+				
+				# Load search strategies
+				search_strategies_data = load_data.get('search_strategies', {})
+				for name, strategy in search_strategies_data.items():
+					if name in self.search_strategies:
+						self.search_strategies[name].set(strategy)
+				
+				# Load random state
+				if 'random_state' in load_data:
+					self.random_state = load_data['random_state']
+					self.random_state_var.set(str(self.random_state))
+				
+				# Update results table if we have results
+				if self.detailed_results:
+					# Create a simple results dataframe for display
+					results_data = []
+					for name, results in self.detailed_results.items():
+						results_data.append({
+							'Classifier': name,
+							'Accuracy': results.get('accuracy', 0),
+							'F1-Score': results.get('f1_weighted', 0)
+						})
+					
+					results_df = pd.DataFrame(results_data)
+					self.last_results_df = results_df  # Store for charts button
+					self._show_results_table(results_df)
+				
+				# Show loaded information
+				timestamp = load_data.get('timestamp', 'Unknown')
+				model_count = len(self.trained_models)
+				
+				messagebox.showinfo("Success", f"Loaded {model_count} models from {filename}\nSaved on: {timestamp}")
+				self._append(f"Loaded {model_count} models from {filename}\n")
+				self._append(f"Models loaded: {', '.join(self.trained_models.keys())}\n")
+				
+			except Exception as e:
+				messagebox.showerror("Error", f"Failed to load models: {e}")
+				self._append(f"Load error: {e}\n")
 
 	def _show_results_viewer(self):
 		"""Show detailed results viewer with models as columns for easy comparison"""

@@ -1,8 +1,3 @@
-"""
-Refactored GUI Application for muML
-Main application class using modular components
-"""
-
 from __future__ import annotations
 
 import threading
@@ -26,6 +21,7 @@ from src.prediction_manager import PredictionManager
 from src.model_manager import ModelManager
 from src.charts import ChartsManager
 from src.detailed_metrics import DetailedMetrics
+from src.confusion_matrix_manager import ConfusionMatrixManager
 
 # Suppress warnings
 warnings.simplefilter("ignore", category=UserWarning)
@@ -47,6 +43,7 @@ class MLGuiApp(ttk.Frame):
         self.predictions_df: pd.DataFrame | None = None
         self.detailed_results: Dict[str, Dict[str, Any]] = {}
         self.all_predictions: Dict[str, pd.DataFrame] = {}
+        self.is_training: bool = False
         self.trained_models: Dict[str, Any] = {}
         self.all_predictions_df: pd.DataFrame | None = None
         self.last_results_df: pd.DataFrame | None = None
@@ -61,6 +58,7 @@ class MLGuiApp(ttk.Frame):
         self.model_manager = ModelManager(self)
         self.charts_manager = ChartsManager(self)
         self.detailed_metrics = DetailedMetrics(self)
+        self.confusion_matrix_manager = ConfusionMatrixManager(self)
 
         # UI Variables
         self.target_var = tk.StringVar(value="group_id")
@@ -215,6 +213,9 @@ class MLGuiApp(ttk.Frame):
         charts_btn = ttk.Button(act, text="📈 Show Charts", 
                               command=self.charts_manager.show_charts, style='Info.TButton')
         charts_btn.pack(side=tk.RIGHT, padx=(5, 0))
+        confusion_btn = ttk.Button(act, text="🔢 Confusion Matrices", 
+                                 command=self._show_confusion_matrices, style='Info.TButton')
+        confusion_btn.pack(side=tk.RIGHT, padx=(5, 0))
 
         # Bottom: output + results table
         bottom = ttk.Frame(self)
@@ -256,6 +257,24 @@ class MLGuiApp(ttk.Frame):
         if self.columns:
             self.feature_selector.rebuild_feature_checks(self.columns, self.target_var.get(), self.id_var.get())
 
+    def _validate_and_update_columns(self):
+        """Validate and update target/ID column selections based on current columns"""
+        # Validate and update target column selection
+        current_target = self.target_var.get()
+        if current_target not in self.columns:
+            self.target_var.set("")  # Clear if not found
+            self.target_cb.set("")
+        else:
+            self.target_cb.set(current_target)
+        
+        # Validate and update ID column selection
+        current_id = self.id_var.get()
+        if current_id not in self.columns:
+            self.id_var.set("")  # Clear if not found
+            self.id_cb.set("")
+        else:
+            self.id_cb.set(current_id)
+
     def _on_random_state_changed(self):
         """Update random state when changed"""
         try:
@@ -292,7 +311,11 @@ class MLGuiApp(ttk.Frame):
             self.columns = list_columns(df)
             self.target_cb["values"] = self.columns
             self.id_cb["values"] = self.columns
-            self.feature_selector.rebuild_feature_checks(self.columns)
+            
+            # Validate and update column selections
+            self._validate_and_update_columns()
+            
+            self.feature_selector.rebuild_feature_checks(self.columns, self.target_var.get(), self.id_var.get())
             self._append("Loaded file and updated columns.\n")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load CSV: {e}")
@@ -309,16 +332,37 @@ class MLGuiApp(ttk.Frame):
             self.columns = list_columns(df)
             self.target_cb["values"] = self.columns
             self.id_cb["values"] = self.columns
-            self.feature_selector.rebuild_feature_checks(self.columns)
+            
+            # Validate and update column selections
+            self._validate_and_update_columns()
+            
+            self.feature_selector.rebuild_feature_checks(self.columns, self.target_var.get(), self.id_var.get())
             # If default target exists, ensure selection reflects it
             if "group_id" in self.columns:
                 self.target_var.set("group_id")
+                self.target_cb.set("group_id")
             self._append("Defaults loaded from file.\n")
         except Exception as e:
+            # Clear columns and selections if file not found
+            self.columns = []
+            self.target_cb["values"] = []
+            self.id_cb["values"] = []
+            self.target_var.set("")
+            self.id_var.set("")
+            self.target_cb.set("")
+            self.id_cb.set("")
+            self.feature_selector.rebuild_feature_checks([])
             self._append(f"Error loading default file: {e}\n")
 
     def _on_run(self):
-        """Run training with selected algorithms"""
+        """Run training with selected algorithms or stop ongoing training"""
+        # If training is already in progress, toggle to stop
+        if self.is_training:
+            # Graceful stop - the next operation will detect this flag
+            self.is_training = False
+            self._append("Stopping training...\n")
+            return
+            
         if self.df is None:
             messagebox.showwarning("Missing", "Load a CSV first.")
             return
@@ -343,10 +387,14 @@ class MLGuiApp(ttk.Frame):
             messagebox.showwarning("Missing", "Select at least one algorithm.")
             return
 
-        self.run_btn.configure(state=tk.DISABLED)
+        # Change button to Stop
+        self.run_btn.configure(text="🛑 Stop Training", style='Danger.TButton')
         self._append("Running... This may take a while.\n")
         # Report NaNs prior to preprocessing
         self._report_nans(features, target, id_col)
+        
+        # Flag to track if training is ongoing
+        self.is_training = True
 
         def progress_callback(message):
             self._append(message + "\n")
@@ -377,9 +425,13 @@ class MLGuiApp(ttk.Frame):
                     except (ValueError, TypeError):
                         n_jobs = 8
                     
+                    # Create a stop check callback that returns True if training should stop
+                    def stop_check():
+                        return not self.is_training
+                    
                     results, best = train_selected(selected, prep, n_jobs=n_jobs, random_state=random_state, 
                                                 progress_callback=progress_callback, custom_hyperparams=custom_hyperparams, 
-                                                search_strategies=search_strategies)
+                                                search_strategies=search_strategies, stop_check_callback=stop_check)
                 
                 # Store detailed results for clickable table
                 self.detailed_results = best.get("detailed_results", {})
@@ -389,6 +441,9 @@ class MLGuiApp(ttk.Frame):
                 for name, model_results in self.detailed_results.items():
                     if 'best_estimator' in model_results:
                         self.trained_models[name] = model_results['best_estimator']
+                
+                # Store custom hyperparameters for later use
+                self.custom_params = custom_hyperparams
                 
                 # Build predictions for all models
                 self.all_predictions = build_all_predictions_df(prep, self.detailed_results)
@@ -416,7 +471,9 @@ class MLGuiApp(ttk.Frame):
                 messagebox.showerror("Error", str(e))
                 self._append(f"Error: {e}\n")
             finally:
-                self.run_btn.configure(state=tk.NORMAL)
+                # Change button back to Run Training
+                self.run_btn.configure(text="🚀 Run Training", style='Primary.TButton')
+                self.is_training = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -465,8 +522,16 @@ class MLGuiApp(ttk.Frame):
         # Use ResultsViewer to display results
         ResultsViewer(results_window, self.all_predictions)
 
+    def _show_confusion_matrices(self):
+        """Show confusion matrices for all trained models"""
+        if not hasattr(self, 'detailed_results') or not self.detailed_results:
+            messagebox.showwarning("Missing", "Train models first to view confusion matrices.")
+            return
+        
+        self.confusion_matrix_manager.show_confusion_matrices()
+
     def _save_predictions(self):
-        """Save predictions to CSV"""
+        """Save predictions to CSV with added metric rows"""
         if self.predictions_df is None:
             messagebox.showinfo("Info", "Run and produce predictions first.")
             return
@@ -474,8 +539,82 @@ class MLGuiApp(ttk.Frame):
         if not path:
             return
         try:
-            self.predictions_df.to_csv(path, index=False)
-            messagebox.showinfo("Saved", f"Saved to {path}")
+            # Create a copy of predictions to avoid modifying the original
+            df_to_save = self.predictions_df.copy()
+            
+            # Find the model that was used for the predictions_df
+            best_model_name = None
+            max_f1 = -1
+            
+            # Use the model with highest F1 score
+            for name, model_results in self.detailed_results.items():
+                if 'f1_weighted' in model_results:
+                    f1 = model_results['f1_weighted']
+                    if f1 > max_f1:
+                        max_f1 = f1
+                        best_model_name = name
+            
+            # If we found detailed results, add metric rows
+            if best_model_name in self.detailed_results:
+                results = self.detailed_results[best_model_name]
+                detailed_metrics = results.get('detailed_accuracy_metrics', {})
+                
+                # Add overall accuracy row
+                oa_row = pd.DataFrame({
+                    'tree_id': [np.nan],
+                    'actual_group': [np.nan],
+                    'split': ['OA'],  # Overall Accuracy
+                    'predicted_group': [results.get('accuracy', 0.0)],
+                    'is_correct': [np.nan]
+                })
+                
+                # Add mean class accuracy row
+                mca_row = pd.DataFrame({
+                    'tree_id': [np.nan],
+                    'actual_group': [np.nan],
+                    'split': ['MCA'],  # Mean Class Accuracy
+                    'predicted_group': [detailed_metrics.get('mean_class_accuracy', 0.0)],
+                    'is_correct': [np.nan]
+                })
+                
+                # Add F1 score row
+                f1_row = pd.DataFrame({
+                    'tree_id': [np.nan],
+                    'actual_group': [np.nan],
+                    'split': ['F1'],  # F1-Score
+                    'predicted_group': [results.get('f1_weighted', 0.0)],
+                    'is_correct': [np.nan]
+                })
+                
+                # Add kappa accuracy row
+                ka_row = pd.DataFrame({
+                    'tree_id': [np.nan],
+                    'actual_group': [np.nan],
+                    'split': ['KA'],  # Kappa Accuracy
+                    'predicted_group': [detailed_metrics.get('kappa_accuracy', 0.0)],
+                    'is_correct': [np.nan]
+                })
+                
+                # Add producer's accuracies rows
+                pa_rows = []
+                class_labels = detailed_metrics.get('class_labels', [])
+                producer_accs = detailed_metrics.get('producer_accuracy', [])
+                
+                for i, (label, acc) in enumerate(zip(class_labels, producer_accs)):
+                    pa_rows.append(pd.DataFrame({
+                        'tree_id': [np.nan],
+                        'actual_group': [np.nan],
+                        'split': [f'PA{label}'],  # Producer's Accuracy for class
+                        'predicted_group': [acc],
+                        'is_correct': [np.nan]
+                    }))
+                
+                # Combine all rows
+                metric_rows = pd.concat([oa_row, mca_row, f1_row, ka_row] + pa_rows, ignore_index=True)
+                df_to_save = pd.concat([df_to_save, metric_rows], ignore_index=True)
+            
+            df_to_save.to_csv(path, index=False)
+            messagebox.showinfo("Saved", f"Saved to {path} with metric summary rows")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save: {e}")
             self._append(f"Error: {e}\n")

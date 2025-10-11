@@ -17,9 +17,7 @@ except Exception:
 	has_xgb = False
 	XGBClassifier = None  # type: ignore
 
-
 SearchSpec = Dict[str, Any]
-
 
 def get_model_registry(random_state: int = 42) -> Dict[str, Dict[str, Any]]:
 	registry: Dict[str, Dict[str, Any]] = {

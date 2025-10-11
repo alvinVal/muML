@@ -51,7 +51,7 @@ def calculate_detailed_accuracy_metrics(y_true, y_pred):
 
 def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, random_state: int = 42, 
 				  progress_callback=None, custom_hyperparams: Dict[str, Dict[str, Any]] = None, 
-				  search_strategies: Dict[str, str] = None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+				  search_strategies: Dict[str, str] = None, stop_check_callback=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 	registry = get_model_registry(random_state)
 	results: List[Dict[str, Any]] = []
 	detailed_results: Dict[str, Dict[str, Any]] = {}
@@ -70,6 +70,12 @@ def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, rand
 		progress_callback(f"Using {cv_folds}-fold CV (smallest class has {min_class_size} samples)")
 
 	for i, name in enumerate(models):
+		# Check if we should stop training
+		if stop_check_callback and stop_check_callback():
+			if progress_callback:
+				progress_callback("Training stopped by user.")
+			break
+			
 		if name not in registry:
 			continue
 		
@@ -106,6 +112,8 @@ def train_selected(models: List[str], prep: PreparedData, n_jobs: int = -1, rand
 		row = {
 			"Classifier": name,
 			"Accuracy": acc,
+			"Mean Class Acc": detailed_metrics["mean_class_accuracy"],
+			"Kappa Acc": detailed_metrics["kappa_accuracy"],
 			"F1-Score": f1,
 		}
 		

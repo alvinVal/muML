@@ -47,3 +47,5 @@ Thumbs.db
 # Project specific
 prediction_results.csv
 *.log
+.github/
+src/__pycache__/

@@ -61,7 +61,13 @@ class ModelManager:
                     'search_strategies': {k: v.get() for k, v in self.parent_app.search_strategies.items()},
                     'random_state': self.parent_app.random_state,
                     'timestamp': datetime.now().isoformat(),
-                    'version': '1.0'
+                    'version': '1.0',
+                    # Save training configuration options
+                    'test_size': self.parent_app.test_size_var.get(),
+                    'stratify': self.parent_app.stratify_var.get(),
+                    'n_jobs': self.parent_app.n_jobs_var.get(),
+                    'target_column': self.parent_app.target_var.get(),
+                    'id_column': self.parent_app.id_var.get()
                 }
                 
                 # Save to file
@@ -111,14 +117,31 @@ class ModelManager:
                     self.parent_app.random_state = load_data['random_state']
                     self.parent_app.random_state_var.set(str(self.parent_app.random_state))
                 
+                # Load training configuration options
+                if 'test_size' in load_data:
+                    self.parent_app.test_size_var.set(load_data['test_size'])
+                if 'stratify' in load_data:
+                    self.parent_app.stratify_var.set(load_data['stratify'])
+                if 'n_jobs' in load_data:
+                    self.parent_app.n_jobs_var.set(load_data['n_jobs'])
+                if 'target_column' in load_data:
+                    self.parent_app.target_var.set(load_data['target_column'])
+                if 'id_column' in load_data:
+                    self.parent_app.id_var.set(load_data['id_column'])
+                
                 # Update results table if we have results
                 if self.parent_app.detailed_results:
                     # Create a simple results dataframe for display
                     results_data = []
                     for name, results in self.parent_app.detailed_results.items():
+                        # Get detailed metrics from nested dict if available
+                        detailed_metrics = results.get('detailed_accuracy_metrics', {})
+                        
                         results_data.append({
                             'Classifier': name,
                             'Accuracy': results.get('accuracy', 0),
+                            'Mean Class Acc': detailed_metrics.get('mean_class_accuracy', 0),
+                            'Kappa Acc': detailed_metrics.get('kappa_accuracy', 0),
                             'F1-Score': results.get('f1_weighted', 0)
                         })
                     

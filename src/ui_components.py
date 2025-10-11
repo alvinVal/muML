@@ -96,7 +96,7 @@ class UIStyles:
         
         style.configure('Modern.Treeview.Heading',
                        background=self.colors['primary'],
-                       foreground=self.colors['white'],
+                       foreground=self.colors['black'],
                        font=('Arial', 10, 'bold'))
         
         # Configure text widget
@@ -419,14 +419,18 @@ class ResultsTable:
         table_container = ttk.Frame(self.parent_frame)
         table_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         
-        self.results_table = ttk.Treeview(table_container, columns=("Classifier", "Accuracy", "F1-Score"), 
+        self.results_table = ttk.Treeview(table_container, columns=("Classifier", "Accuracy", "Mean Class Acc", "Kappa Acc", "F1-Score"), 
                                         show="headings", style='Modern.Treeview')
         self.results_table.heading("Classifier", text="Classifier")
         self.results_table.heading("Accuracy", text="Accuracy")
+        self.results_table.heading("Mean Class Acc", text="Mean Class Acc")
+        self.results_table.heading("Kappa Acc", text="Kappa Acc")
         self.results_table.heading("F1-Score", text="F1-Score")
-        self.results_table.column("Classifier", width=180, anchor=tk.W)
-        self.results_table.column("Accuracy", width=90, anchor=tk.CENTER)
-        self.results_table.column("F1-Score", width=90, anchor=tk.CENTER)
+        self.results_table.column("Classifier", width=150, anchor=tk.W)
+        self.results_table.column("Accuracy", width=80, anchor=tk.CENTER)
+        self.results_table.column("Mean Class Acc", width=100, anchor=tk.CENTER)
+        self.results_table.column("Kappa Acc", width=80, anchor=tk.CENTER)
+        self.results_table.column("F1-Score", width=80, anchor=tk.CENTER)
         
         table_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.results_table.yview)
         self.results_table.configure(yscrollcommand=table_scroll.set)
@@ -448,5 +452,7 @@ class ResultsTable:
         for _, r in results_df.iterrows():
             sclf = str(r.get("Classifier"))
             acc = f"{float(r.get('Accuracy', 0.0)):.4f}"
+            mean_class_acc = f"{float(r.get('Mean Class Acc', 0.0)):.4f}"
+            kappa_acc = f"{float(r.get('Kappa Acc', 0.0)):.4f}"
             f1 = f"{float(r.get('F1-Score', 0.0)):.4f}"
-            self.results_table.insert("", tk.END, values=(sclf, acc, f1))
+            self.results_table.insert("", tk.END, values=(sclf, acc, mean_class_acc, kappa_acc, f1))

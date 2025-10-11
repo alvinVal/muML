@@ -301,19 +301,14 @@ class ResultsViewer:
         """Update the model accuracy display based on filtered data"""
         # Clear existing accuracy labels
         for widget in self.accuracy_display.winfo_children():
-            if isinstance(widget, ttk.Frame):
-                widget.destroy()
-        
-        # Create new accuracy display
-        accuracy_display = ttk.Frame(self.accuracy_frame)
-        accuracy_display.pack(fill=tk.X, padx=10, pady=5)
+            widget.destroy()
         
         # Calculate accuracies for each model
         model_accuracies = {}
         total_samples = len(combined_data)
         
         if total_samples == 0:
-            ttk.Label(accuracy_display, text="No samples match the current filters", 
+            ttk.Label(self.accuracy_display, text="No samples match the current filters", 
                      font=("Arial", 10, "italic")).pack()
             return
         
@@ -351,7 +346,7 @@ class ResultsViewer:
         # Display accuracies in a single row - fit all models
         for col, (model_name, stats) in enumerate(sorted_models):
             # Create model accuracy frame
-            model_frame = ttk.Frame(accuracy_display)
+            model_frame = ttk.Frame(self.accuracy_display)
             model_frame.grid(row=0, column=col, padx=4, pady=3, sticky="ew")
             
             # Model name (shorter for space)
@@ -370,7 +365,7 @@ class ResultsViewer:
         
         # Configure grid weights for all columns
         for i in range(len(sorted_models)):
-            accuracy_display.columnconfigure(i, weight=1)
+            self.accuracy_display.columnconfigure(i, weight=1)
 
 
 class PredictionsViewer:
@@ -686,12 +681,7 @@ class PredictionsViewer:
         """Update the model accuracy display based on filtered data"""
         # Clear existing accuracy labels
         for widget in self.accuracy_display.winfo_children():
-            if isinstance(widget, ttk.Frame):
-                widget.destroy()
-        
-        # Create new accuracy display
-        accuracy_display = ttk.Frame(self.accuracy_frame)
-        accuracy_display.pack(fill=tk.X, padx=10, pady=5)
+            widget.destroy()
         
         # Calculate accuracies for each model
         model_accuracies = {}
@@ -721,7 +711,7 @@ class PredictionsViewer:
         # Display accuracies in a single row
         for model_name, accuracy in sorted_models:
             # Create frame for this model's accuracy
-            model_frame = ttk.Frame(accuracy_display)
+            model_frame = ttk.Frame(self.accuracy_display)
             model_frame.pack(side=tk.LEFT, padx=10)
             
             # Model name

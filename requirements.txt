@@ -1,6 +1,6 @@
 pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.3
-xgboost>=1.7
 matplotlib>=3.7
-shap>=0.42
+xgboost>=1.7  # Optional: For XGBoost algorithm
+shap>=0.42    # Optional: For feature importance visualization
